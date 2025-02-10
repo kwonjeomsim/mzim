@@ -110,12 +110,6 @@ void addRowToSrows(int row_index, int add_index, char *buf, int len)
     newsrow.len = len;
 
     srow *newsrows = realloc(info.srows, (info.numsrows + 1) * sizeof(srow));
-
-    /*
-    if (add_index != info.numsrows) {
-        memcpy(newsrows + add_index + 2, newsrows + add_index + 1, (info.numsrows - (add_index + 1)) * sizeof(srow));
-    }
-    */
     newsrows[add_index] = newsrow;
 
     info.srows = newsrows;
@@ -151,7 +145,7 @@ void updateSrows()
             int rowlen = currow.len;
 
             while (rowlen >= info.screen_col) {
-                split_point = findSplitPoint(rowlen, tmpbuf);
+                split_point = findSplitPoint(rowlen, tmpbuf);       // split erow into two pieces
 
                 int newlen = split_point;
                 char *newbuf = (char *) malloc(newlen);
@@ -522,6 +516,10 @@ void moveCursor(int key)
         case ARROW_RIGHT:
             if (info.cursor_x <= info.srows[info.cursor_y + info.cursor_y_offset - 1].len)
                 info.cursor_x += 1;
+            else {
+                moveCursor(ARROW_DOWN);
+                info.cursor_x = 1;
+            }
             break;
         case ARROW_LEFT:
             if (info.cursor_x > 1)
