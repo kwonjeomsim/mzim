@@ -207,7 +207,8 @@ int addCharacter(char *buf, int len)
 
     int prev_srows_len = getSrowLen(row_index);
 
-    memcpy(newbuf + prev_srows_len + info.cursor_x + len - 1, newbuf + prev_srows_len + info.cursor_x - 1, currow->len - prev_srows_len - info.cursor_x + 1);
+    memcpy(newbuf + prev_srows_len + info.cursor_x + len - 1, newbuf + prev_srows_len + info.cursor_x - 1,
+           currow->len - prev_srows_len - info.cursor_x + 1);
     memcpy(newbuf + prev_srows_len + info.cursor_x - 1, buf, len);
 
     currow->dirty = 1;
@@ -262,7 +263,7 @@ int deleteCharacter(int mode, int len)
     int row_index = cursrow.row_index;
     erow *currow = &info.rows[row_index];
 
-    if (info.cursor_x == 1 && info.cursor_y == 1) {
+    if (mode == BACKSPACE && info.cursor_x == 1 && info.cursor_y == 1) {
         return -1;
     }
 
@@ -301,7 +302,8 @@ int deleteCharacter(int mode, int len)
         return -1;
     }
 
-    memcpy(tmpbuf, currow->buf + prev_srows_len + info.cursor_x + len - offset, currow->len - prev_srows_len - info.cursor_x - len + offset);
+    memcpy(tmpbuf, currow->buf + prev_srows_len + info.cursor_x + len - offset,
+           currow->len - prev_srows_len - info.cursor_x - len + offset);
     memcpy(newbuf + info.cursor_x - offset, tmpbuf, currow->len - prev_srows_len - info.cursor_x - len + offset);
 
     currow->len -= len;
@@ -450,6 +452,32 @@ void initScreenNoArgs(struct cbuf *cb)
     updateRows(0, *cb);
 }
 
+void quitAction()
+{
+    for (int i = 0; i < info.numrows; i++) {
+        erow *currow = &info.rows[i];
+        free(currow->buf);
+    }
+    free(info.rows);
+    free(info.srows);
+
+    write(STDOUT_FILENO, "\x1b[2J", 4);
+    write(STDOUT_FILENO, "\x1b[H", 3);
+}
+
+void clearScreen()
+{
+    write(STDOUT_FILENO, "\x1b[2J", 4);
+    write(STDOUT_FILENO, "\x1b[H", 3);
+}
+
+void drawCursor()
+{
+    char buf[10];
+    snprintf(buf, 10, "\x1b[%d;%dH", info.cursor_y, info.cursor_x);
+    write(STDOUT_FILENO, buf, 10);
+}
+
 /*
  * Open Existing file by using argument when execute program. (./mzim <filename>)
  *
@@ -475,19 +503,56 @@ int openFile(struct cbuf *cb)
     updateRows(1, *cb);
 
     free(c);
+    fclose(fp);
     return 0;
 }
 
-void clearScreen()
+char* getFileName()
 {
-    write(STDOUT_FILENO, "\x1b[2J", 4);
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    char filename_buf[80];
+
+    if (fgets(filename_buf, 80, stdin) == NULL) {
+        perror("fgets");
+        quitAction();
+    }
+
+    filename_buf[strlen(filename_buf) - 1] = '\0';
+
+    return filename_buf;
+}
+
+int saveFile()
+{
+    if (info.filename == NULL) {
+        int prev_cursor_info[] = { info.cursor_x, info.cursor_y, info.cursor_y_offset };
+        info.cursor_y = info.screen_row;
+        drawCursor();
+
+        info.filename = getFileName();
+
+        info.cursor_x = prev_cursor_info[0];
+        info.cursor_y = prev_cursor_info[1];
+        info.cursor_y_offset = prev_cursor_info[2];
+    }
+    FILE *fp = fopen(info.filename, "w");
+    if (fp == NULL) {
+        perror("fopen");
+        return -1;
+    }
+
+    for (int i = 0; i < info.numrows; i++) {
+        erow currow = info.rows[i];
+
+        fwrite(currow.buf, currow.len, 1, fp);
+        fwrite("\n", 1, 1, fp);
+    }
+
+    fclose(fp);
+    return 0;
 }
 
 void moveCursor(int key)
 {
-    if (info.rows[info.srows[info.cursor_y + info.cursor_y_offset - 1].row_index].dirty == 0)
-        return;
 
     switch(key) {
         case ARROW_UP:
@@ -497,13 +562,18 @@ void moveCursor(int key)
             else if (info.cursor_y_offset > 0) {
                 info.cursor_y_offset -= 1;
             }
+
             if (info.srows[info.cursor_y + info.cursor_y_offset - 1].len < info.cursor_x)
                     info.cursor_x = info.srows[info.cursor_y + info.cursor_y_offset - 1].len + 1;
 
             break;
         case ARROW_DOWN:
-            if (info.cursor_y + info.cursor_y_offset < info.numsrows) {
-                if (info.cursor_y >= info.screen_row)
+            if (info.rows[info.srows[info.cursor_y + info.cursor_y_offset].row_index].dirty == 0)
+                return;
+
+            if (info.cursor_y + info.cursor_y_offset < info.numsrows &&
+                info.srows[info.cursor_y + info.cursor_y_offset].row_index != -1) {
+                if (info.cursor_y >= info.screen_row - 1)
                     info.cursor_y_offset += 1;
                 else
                     info.cursor_y += 1;
@@ -514,6 +584,9 @@ void moveCursor(int key)
 
             break;
         case ARROW_RIGHT:
+            if (info.rows[info.srows[info.cursor_y + info.cursor_y_offset - 1].row_index].dirty == 0)
+                return;
+
             if (info.cursor_x <= info.srows[info.cursor_y + info.cursor_y_offset - 1].len)
                 info.cursor_x += 1;
             else {
@@ -522,17 +595,17 @@ void moveCursor(int key)
             }
             break;
         case ARROW_LEFT:
+            if (info.cursor_x == 1 && info.cursor_y + info.cursor_y_offset == 1)
+                return;
+
             if (info.cursor_x > 1)
                 info.cursor_x -= 1;
+            else {
+                moveCursor(ARROW_UP);
+                info.cursor_x = info.srows[info.cursor_y + info.cursor_y_offset - 1].len + 1;
+            }
             break;
     }
-}
-
-void drawCursor()
-{
-    char buf[10];
-    snprintf(buf, 10, "\x1b[%d;%dH", info.cursor_y, info.cursor_x);
-    write(STDOUT_FILENO, buf, 10);
 }
 
 void drawContentRow()
@@ -540,7 +613,7 @@ void drawContentRow()
     clearScreen();
 
     int i;
-    for (i = 0; i < info.screen_row - 1; i++) {
+    for (i = 0; i < info.screen_row - 2; i++) {
         write(STDOUT_FILENO, info.srows[i + info.cursor_y_offset].buf, info.srows[i + info.cursor_y_offset].len);
         write(STDOUT_FILENO, "\n\r", 2);
     }
@@ -606,19 +679,6 @@ int getKey()
     return c;
 }
 
-void quit_action()
-{
-    for (int i = 0; i < info.numrows; i++) {
-        erow *currow = &info.rows[i];
-        free(currow->buf);
-    }
-    free(info.rows);
-    free(info.srows);
-
-    write(STDOUT_FILENO, "\x1b[2J", 4);
-    write(STDOUT_FILENO, "\x1b[H", 3);
-}
-
 void manageKeyInput()
 {
     int c = getKey();
@@ -626,14 +686,18 @@ void manageKeyInput()
 
     switch(c) {
         case CTRL_KEY('q'):
-            quit_action();
+            quitAction();
             exit(0);
+            break;
+
+        case CTRL_KEY('s'):
+            saveFile();
             break;
 
         case PAGE_UP:
         case PAGE_DOWN:
         {
-            int iter = info.screen_row;
+            int iter = info.screen_row - 1;
             while(--iter) {
                 moveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
             }
@@ -674,6 +738,9 @@ void manageKeyInput()
                 addCharacter(" ", 1);
                 moveCursor(ARROW_RIGHT);
             }
+            break;
+
+        case 27:    //ESC
             break;
 
         default:
