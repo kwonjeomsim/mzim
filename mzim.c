@@ -10,6 +10,9 @@
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define CBUF_INIT {0, NULL}
 
+#define PROMPT_LEN 33
+#define PROMPT_MSG "Ctrl-S: Save File   Ctrl-Q: Quit"
+
 enum editorKey {
     ARROW_LEFT = 1000,
     ARROW_RIGHT,
@@ -92,6 +95,12 @@ void enableRawMode()
     raw.c_cc[VTIME] = 1;
 
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
+}
+
+void setPromptMsg(char *buf, int len)
+{
+    info.prompt.len = len;
+    info.prompt.buf = buf;
 }
 
 int addToCbuf(struct cbuf *cb, char *buf, int len)
@@ -585,9 +594,13 @@ void drawContentRow()
     drawCursor();
 }
 
-void getFileName()
+void setFileName()
 {
     int c;
+
+    setPromptMsg(NULL, 0);
+
+    drawContentRow();
 
     while (1) {
         c = getKey();
@@ -611,6 +624,9 @@ void getFileName()
         drawCursor();
         drawContentRow();
     }
+
+    info.filename = info.prompt.buf;
+
 }
 
 int saveFile()
@@ -619,15 +635,16 @@ int saveFile()
         int prev_cursor_info[] = { info.cursor_x, info.cursor_y, info.cursor_y_offset };
         info.cursor_y = info.screen_row;
         info.cursor_x = 1;
+
         drawCursor();
 
-        getFileName();
-        info.filename = info.prompt.buf;
+        setFileName();
 
         info.cursor_x = prev_cursor_info[0];
         info.cursor_y = prev_cursor_info[1];
         info.cursor_y_offset = prev_cursor_info[2];
     }
+
     FILE *fp = fopen(info.filename, "w");
     if (fp == NULL) {
         perror("fopen");
@@ -642,6 +659,8 @@ int saveFile()
         fwrite(currow.buf, currow.len, 1, fp);
         fwrite("\n", 1, 1, fp);
     }
+
+    setPromptMsg("Successfully Saved!", 19);
 
     fclose(fp);
     return 0;
@@ -707,6 +726,9 @@ void manageKeyInput()
 {
     int c = getKey();
     char* buf = (char *) malloc(sizeof(char));
+
+    // If prompt message is differ from origin, back to basic message.
+    setPromptMsg(PROMPT_MSG, PROMPT_LEN);
 
     switch(c) {
         case CTRL_KEY('q'):
@@ -810,8 +832,8 @@ void initializeEditorInfo()
     info.numsrows = 0;
     info.srows = NULL;
 
-    info.prompt.len = 0;
-    info.prompt.buf = NULL;
+    info.prompt.len = PROMPT_LEN;
+    info.prompt.buf = PROMPT_MSG;
 }
 
 int main(int argc, char **argv)
